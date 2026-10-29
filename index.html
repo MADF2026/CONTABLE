@@ -20,6 +20,7 @@
     <!-- Firebase -->
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js" onerror="window._firebaseLoadError=true"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js" onerror="window._firebaseLoadError=true"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js" onerror="window._firebaseLoadError=true"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -2674,68 +2675,23 @@
             sel.value = val;
         }
 
-        function getUsuarios() {
-            const defaults = {
-                "admin":    {password: "admin123",    rol: "administrador"},
-                "contador": {password: "contador123", rol: "solo_lectura"}
-            };
-            const saved = localStorage.getItem('usuarios_claves');
-            if (saved) {
-                try {
-                    const savedObj = JSON.parse(saved);
-                    Object.keys(savedObj).forEach(u => {
-                        if (!defaults[u]) defaults[u] = {password:'', rol:'solo_lectura'};
-                        // Handle both string format (old) and object format (new)
-                        if (typeof savedObj[u] === 'string') {
-                            defaults[u].password = savedObj[u];
-                        } else if (savedObj[u] && savedObj[u].password) {
-                            defaults[u].password = savedObj[u].password;
-                            if (savedObj[u].rol) defaults[u].rol = savedObj[u].rol;
-                        }
-                    });
-                } catch(e) {}
-            }
-            return defaults;
-        }
-
+        function getUsuarios() { return {}; }
 
         function iniciarSesion() {
             const empresa = document.getElementById('login-empresa').value;
-            const usuario = document.getElementById('login-usuario').value;
+            const usuario = document.getElementById('login-usuario').value.trim().toLowerCase();
             const password = document.getElementById('login-password').value;
-
-            const usuarios = getUsuarios();
-
-            // Si la clave no coincide localmente, intentar recargar usuarios desde Firebase
-            if (!usuarios[usuario] || usuarios[usuario].password !== password) {
-                showToast('Verificando credenciales...', 'success');
-                (async () => {
-                    try {
-                        if (window.db) {
-                            const empKeys = ['anfa_renca','empresa_2','empresa_3','empresa_4','empresa_5','empresa_6','empresa_7','empresa_8','empresa_9','empresa_10','empresa_11','empresa_12','empresa_13','empresa_14','empresa_15'];
-                            for (const emp of empKeys) {
-                                const doc = await window.db.collection('empresas').doc(emp).get();
-                                if (doc.exists && doc.data().datos && doc.data().datos['usuarios_claves']) {
-                                    localStorage.setItem('usuarios_claves', doc.data().datos['usuarios_claves']);
-                                    break;
-                                }
-                            }
-                        }
-                    } catch(e) {}
-                    const usuariosRecargados = getUsuarios();
-                    if (usuariosRecargados[usuario] && usuariosRecargados[usuario].password === password) {
-                        iniciarSesionConExito(empresa, usuario, usuariosRecargados[usuario].rol);
-                    } else {
-                        showToast('Usuario o contraseña incorrectos', 'error');
-                    }
-                })();
-                return;
-            }
-            if (usuarios[usuario] && usuarios[usuario].password === password) {
-                iniciarSesionConExito(empresa, usuario, usuarios[usuario].rol);
-            } else {
-                showToast('Usuario o contraseña incorrectos', 'error');
-            }
+            if (!usuario || !password) { showToast('Ingresa usuario y contraseña', 'error'); return; }
+            if (typeof firebase === 'undefined' || !firebase.auth) { showToast('Sin conexión con Firebase: no se puede iniciar sesión', 'error'); return; }
+            const email = usuario.includes('@') ? usuario : usuario + '@contable.app';
+            const nombre = usuario.split('@')[0];
+            showToast('Verificando credenciales...', 'success');
+            firebase.auth().signInWithEmailAndPassword(email, password).then(async () => {
+                localStorage.removeItem('usuarios_claves');
+                try { if (window.precargarConfigGlobal) await window.precargarConfigGlobal(); } catch(e) {}
+                const rol = (nombre === 'admin') ? 'administrador' : 'solo_lectura';
+                iniciarSesionConExito(empresa, nombre, rol);
+            }).catch(() => showToast('Usuario o contraseña incorrectos', 'error'));
         }
 
         function iniciarSesionConExito(empresa, usuario, rol) {
@@ -2769,6 +2725,7 @@
         }
 
         function cerrarSesion() {
+            try { firebase.auth().signOut(); } catch(e) {}
             if (_firestoreListener) { _firestoreListener(); _firestoreListener = null; }
             sesionActual = {usuario: null, rol: null, empresa: null};
             document.getElementById('login-screen').classList.remove('hidden');
@@ -6442,6 +6399,7 @@ body { background:#fff; padding:28px 32px; color:#1E293B; font-size:13px; }
 
         document.addEventListener('DOMContentLoaded', () => {
             // Precargar config global desde Firebase antes del login
+            window.precargarConfigGlobal = precargarConfigGlobal;
             async function precargarConfigGlobal() {
                 try {
                     if (!window.db) { actualizarSelectorEmpresas(); return; }
@@ -7893,42 +7851,17 @@ body { background:#fff; padding:28px 32px; color:#1E293B; font-size:13px; }
             const nueva     = document.getElementById('cambio-nueva').value;
             const confirmar = document.getElementById('cambio-confirmar').value;
             const errorDiv  = document.getElementById('cambio-error');
-
-            const mostrarError = msg => {
-                errorDiv.textContent = msg;
-                errorDiv.classList.remove('hidden');
-            };
-
+            const mostrarError = msg => { errorDiv.textContent = msg; errorDiv.classList.remove('hidden'); };
             errorDiv.classList.add('hidden');
-
-            const usuarios = getUsuarios();
-            const user = sesionActual.usuario;
-
-            if (!usuarios[user]) return;
-            if (usuarios[user].password !== actual) {
-                mostrarError('❌ La contraseña actual es incorrecta'); return;
-            }
-            if (nueva.length < 6) {
-                mostrarError('❌ La nueva contraseña debe tener al menos 6 caracteres'); return;
-            }
-            if (nueva !== confirmar) {
-                mostrarError('❌ Las contraseñas no coinciden'); return;
-            }
-
-            // Guardar nueva clave en localStorage
-            const saved = JSON.parse(localStorage.getItem('usuarios_claves') || '{}');
-            saved[user] = { password: nueva, rol: usuarios[user].rol };
-            localStorage.setItem('usuarios_claves', JSON.stringify(saved));
-
-            // Sincronizar INMEDIATAMENTE con Firebase (sin debounce)
-            if (sesionActual.empresa) {
-                guardarEnFirebase(sesionActual.empresa).then(() => {
-                    console.log('Clave guardada en Firebase OK');
-                });
-            }
-
-            cerrarCambioClave();
-            showToast('✅ Contraseña actualizada correctamente ☁️', 'success');
+            if (nueva.length < 6) { mostrarError('❌ La nueva contraseña debe tener al menos 6 caracteres'); return; }
+            if (nueva !== confirmar) { mostrarError('❌ Las contraseñas no coinciden'); return; }
+            const u = firebase.auth().currentUser;
+            if (!u) { mostrarError('❌ Sesión no válida, vuelve a ingresar'); return; }
+            const cred = firebase.auth.EmailAuthProvider.credential(u.email, actual);
+            u.reauthenticateWithCredential(cred)
+                .then(() => u.updatePassword(nueva))
+                .then(() => { cerrarCambioClave(); showToast('✅ Contraseña actualizada correctamente', 'success'); })
+                .catch(() => mostrarError('❌ La contraseña actual es incorrecta'));
         }
 
         // Tabs
@@ -7948,7 +7881,7 @@ body { background:#fff; padding:28px 32px; color:#1E293B; font-size:13px; }
             backup.datos['plan_cuentas_' + empresa] = JSON.stringify(planCuentas);
             backup.datos['flujo_' + empresa]        = JSON.stringify(flujoCuentas);
             // Config global
-            ['usuarios_claves','empresas_config'].forEach(k => {
+            ['empresas_config'].forEach(k => {
                 const val = localStorage.getItem(k);
                 if (val) backup.datos[k] = val;
             });
