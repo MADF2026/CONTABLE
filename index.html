@@ -2099,6 +2099,7 @@
         // ── SYNC FIREBASE ─────────────────────────────────────────
 
         async function guardarEnFirebase(empresa) {
+            if (sesionActual && sesionActual.rol === 'solo_lectura') return;
             if (!empresa || !db || _cargandoDatos || _syncApplyingRemote) return;
             try {
                 // Siempre leer la versión remota antes de escribir. Así un equipo que
@@ -2254,6 +2255,7 @@
 
         // Limpia empresas_config de los docs individuales en Firebase (migración única)
         async function limpiarEmpresasConfigDeFirebase() {
+            if (sesionActual && sesionActual.rol === 'solo_lectura') return;
             if (!window.db) return;
             if (localStorage.getItem('_migrado_empresas_config')) return; // solo una vez
             try {
@@ -2633,6 +2635,7 @@
 
             // Función que hace el guardado en Firebase
             async function _guardarNombresFirebase(db) {
+            if (sesionActual && sesionActual.rol === 'solo_lectura') return;
                 const datos = { empresas_config: JSON.stringify(cfg) };
                 keys.forEach(k => {
                     datos['emp_' + k + '_nombre'] = cfg[k].nombre;
@@ -2721,6 +2724,16 @@
                     document.getElementById('empresa-nombre').textContent = getNombreEmpresa(empresa);
                     actualizarSelectorEmpresas();
                     showToast('¡Bienvenido ' + usuario + (cargado ? ' — datos sincronizados ☁️' : ' — sin conexión, datos locales'), 'success');
+                    if (rol === 'administrador') {
+                        setTimeout(() => {
+                            try {
+                                const ult = parseInt(localStorage.getItem('ultimo_backup') || '0', 10);
+                                const dias = ult ? Math.floor((Date.now() - ult) / 86400000) : null;
+                                if (dias === null) showToast('⚠️ Aún no has hecho un respaldo. Usa Exportar Respaldo.', 'error');
+                                else if (dias >= 7) showToast('⚠️ Último respaldo hace ' + dias + ' días. Haz uno nuevo.', 'error');
+                            } catch(e) {}
+                        }, 4000);
+                    }
                 });
         }
 
@@ -7867,6 +7880,7 @@ body { background:#fff; padding:28px 32px; color:#1E293B; font-size:13px; }
         // Tabs
         // ── BACKUP EXPORTAR / IMPORTAR ────────────────────────────
         function exportarBackup() {
+            try { localStorage.setItem('ultimo_backup', String(Date.now())); } catch(e) {}
             const empresa = sesionActual.empresa || 'anfa_renca';
             // Primero guardar datos actuales en localStorage
             guardarLocalStorage();
